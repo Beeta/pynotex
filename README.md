@@ -249,7 +249,7 @@ A: 不需要。如果没有 DeepInsight，会自动使用 LLM 生成深度洞察
 
 ### 🙏 致谢
 
-本项目完整复刻自 [Notex](https://github.com/sonokai/notex)，感谢原作者的开源贡献。
+本项目完整复刻自 [Notex](https://github.com/smallnest/notex)，感谢原作者的开源贡献。
 
 ---
 
