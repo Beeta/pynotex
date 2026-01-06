@@ -1,0 +1,503 @@
+"""
+SQLite data persistence for Notex (对应 Go 的 store.go)
+"""
+import aiosqlite
+import json
+import uuid
+from datetime import datetime
+from pathlib import Path
+from typing import List, Optional
+from app.types import Notebook, Source, Note, ChatSession, ChatMessage
+from app.config import Config
+
+
+class Store:
+    """数据存储管理"""
+
+    def __init__(self, config: Config):
+        self.config = config
+        self.db_path = config.store_path
+        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
+
+    def _get_connection(self):
+        """获取数据库连接"""
+        return aiosqlite.connect(self.db_path)
+
+    async def init_schema(self):
+        """初始化数据库表结构"""
+        schema = """
+        CREATE TABLE IF NOT EXISTS notebooks (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            metadata TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS sources (
+            id TEXT PRIMARY KEY,
+            notebook_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            type TEXT NOT NULL,
+            url TEXT,
+            content TEXT,
+            file_name TEXT,
+            file_size INTEGER,
+            chunk_count INTEGER DEFAULT 0,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            metadata TEXT,
+            FOREIGN KEY (notebook_id) REFERENCES notebooks(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS notes (
+            id TEXT PRIMARY KEY,
+            notebook_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            content TEXT NOT NULL,
+            type TEXT NOT NULL,
+            source_ids TEXT,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            metadata TEXT,
+            FOREIGN KEY (notebook_id) REFERENCES notebooks(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS chat_sessions (
+            id TEXT PRIMARY KEY,
+            notebook_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            metadata TEXT,
+            FOREIGN KEY (notebook_id) REFERENCES notebooks(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS chat_messages (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            sources TEXT,
+            created_at INTEGER NOT NULL,
+            metadata TEXT,
+            FOREIGN KEY (session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS podcasts (
+            id TEXT PRIMARY KEY,
+            notebook_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            script TEXT,
+            audio_url TEXT,
+            duration INTEGER DEFAULT 0,
+            voice TEXT NOT NULL,
+            status TEXT NOT NULL,
+            source_ids TEXT,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            metadata TEXT,
+            FOREIGN KEY (notebook_id) REFERENCES notebooks(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_sources_notebook ON sources(notebook_id);
+        CREATE INDEX IF NOT EXISTS idx_notes_notebook ON notes(notebook_id);
+        CREATE INDEX IF NOT EXISTS idx_chat_sessions_notebook ON chat_sessions(notebook_id);
+        CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(session_id);
+        CREATE INDEX IF NOT EXISTS idx_podcasts_notebook ON podcasts(notebook_id);
+        """
+
+        async with self._get_connection() as conn:
+        if True: await conn.execute("PRAGMA foreign_keys = ON")
+            await conn.execute("PRAGMA foreign_keys = ON")
+            await conn.executescript(schema)
+            await conn.commit()
+
+    # Notebook operations
+
+    async def create_notebook(self, name: str, description: str, metadata: dict) -> Notebook:
+        """创建笔记本"""
+        nb_id = str(uuid.uuid4())
+        now = int(datetime.now().timestamp())
+        metadata_json = json.dumps(metadata)
+
+        async with self._get_connection() as conn:
+        if True: await conn.execute("PRAGMA foreign_keys = ON")
+            await conn.execute(
+                "INSERT INTO notebooks (id, name, description, created_at, updated_at, metadata) VALUES (?, ?, ?, ?, ?, ?)",
+                (nb_id, name, description, now, now, metadata_json)
+            )
+            await conn.commit()
+
+        return await self.get_notebook(nb_id)
+
+    async def get_notebook(self, notebook_id: str) -> Optional[Notebook]:
+        """获取笔记本"""
+        async with self._get_connection() as conn:
+        if True: await conn.execute("PRAGMA foreign_keys = ON")
+            async with conn.execute(
+                "SELECT id, name, description, created_at, updated_at, metadata FROM notebooks WHERE id = ?",
+                (notebook_id,)
+            ) as cursor:
+                row = await cursor.fetchone()
+                if not row:
+                    return None
+
+                return Notebook(
+                    id=row[0],
+                    name=row[1],
+                    description=row[2],
+                    created_at=datetime.fromtimestamp(row[3]),
+                    updated_at=datetime.fromtimestamp(row[4]),
+                    metadata=json.loads(row[5]) if row[5] else {}
+                )
+
+    async def list_notebooks(self) -> List[Notebook]:
+        """列出所有笔记本"""
+        async with self._get_connection() as conn:
+        if True: await conn.execute("PRAGMA foreign_keys = ON")
+            async with conn.execute(
+                "SELECT id, name, description, created_at, updated_at, metadata FROM notebooks ORDER BY updated_at DESC"
+            ) as cursor:
+                notebooks = []
+                async for row in cursor:
+                    notebooks.append(Notebook(
+                        id=row[0],
+                        name=row[1],
+                        description=row[2],
+                        created_at=datetime.fromtimestamp(row[3]),
+                        updated_at=datetime.fromtimestamp(row[4]),
+                        metadata=json.loads(row[5]) if row[5] else {}
+                    ))
+                return notebooks
+
+    async def update_notebook(self, notebook_id: str, name: str, description: str, metadata: dict) -> Optional[Notebook]:
+        """更新笔记本"""
+        now = int(datetime.now().timestamp())
+        metadata_json = json.dumps(metadata)
+
+        async with self._get_connection() as conn:
+        if True: await conn.execute("PRAGMA foreign_keys = ON")
+            await conn.execute(
+                "UPDATE notebooks SET name = ?, description = ?, updated_at = ?, metadata = ? WHERE id = ?",
+                (name, description, now, metadata_json, notebook_id)
+            )
+            await conn.commit()
+
+        return await self.get_notebook(notebook_id)
+
+    async def delete_notebook(self, notebook_id: str):
+        """删除笔记本"""
+        async with self._get_connection() as conn:
+        if True: await conn.execute("PRAGMA foreign_keys = ON")
+            await conn.execute("DELETE FROM notebooks WHERE id = ?", (notebook_id,))
+            await conn.commit()
+
+    # Source operations
+
+    async def create_source(self, source: Source) -> Source:
+        """创建来源"""
+        if not source.id:
+            source.id = str(uuid.uuid4())
+        now = int(datetime.now().timestamp())
+        source.created_at = datetime.fromtimestamp(now)
+        source.updated_at = datetime.fromtimestamp(now)
+
+        metadata_json = json.dumps(source.metadata)
+
+        async with self._get_connection() as conn:
+        if True: await conn.execute("PRAGMA foreign_keys = ON")
+            await conn.execute(
+                """INSERT INTO sources (id, notebook_id, name, type, url, content, file_name, file_size,
+                   chunk_count, created_at, updated_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (source.id, source.notebook_id, source.name, source.type, source.url, source.content,
+                 source.file_name, source.file_size, source.chunk_count, now, now, metadata_json)
+            )
+            await conn.commit()
+
+        return source
+
+    async def get_source(self, source_id: str) -> Optional[Source]:
+        """获取来源"""
+        async with self._get_connection() as conn:
+        if True: await conn.execute("PRAGMA foreign_keys = ON")
+            async with conn.execute(
+                """SELECT id, notebook_id, name, type, url, content, file_name, file_size,
+                   chunk_count, created_at, updated_at, metadata FROM sources WHERE id = ?""",
+                (source_id,)
+            ) as cursor:
+                row = await cursor.fetchone()
+                if not row:
+                    return None
+
+                return Source(
+                    id=row[0],
+                    notebook_id=row[1],
+                    name=row[2],
+                    type=row[3],
+                    url=row[4],
+                    content=row[5],
+                    file_name=row[6],
+                    file_size=row[7],
+                    chunk_count=row[8],
+                    created_at=datetime.fromtimestamp(row[9]),
+                    updated_at=datetime.fromtimestamp(row[10]),
+                    metadata=json.loads(row[11]) if row[11] else {}
+                )
+
+    async def list_sources(self, notebook_id: str) -> List[Source]:
+        """列出笔记本的所有来源"""
+        async with self._get_connection() as conn:
+        if True: await conn.execute("PRAGMA foreign_keys = ON")
+            async with conn.execute(
+                """SELECT id, notebook_id, name, type, url, content, file_name, file_size,
+                   chunk_count, created_at, updated_at, metadata FROM sources WHERE notebook_id = ? ORDER BY created_at DESC""",
+                (notebook_id,)
+            ) as cursor:
+                sources = []
+                async for row in cursor:
+                    sources.append(Source(
+                        id=row[0],
+                        notebook_id=row[1],
+                        name=row[2],
+                        type=row[3],
+                        url=row[4],
+                        content=row[5],
+                        file_name=row[6],
+                        file_size=row[7],
+                        chunk_count=row[8],
+                        created_at=datetime.fromtimestamp(row[9]),
+                        updated_at=datetime.fromtimestamp(row[10]),
+                        metadata=json.loads(row[11]) if row[11] else {}
+                    ))
+                return sources
+
+    async def delete_source(self, source_id: str):
+        """删除来源"""
+        async with self._get_connection() as conn:
+        if True: await conn.execute("PRAGMA foreign_keys = ON")
+            await conn.execute("DELETE FROM sources WHERE id = ?", (source_id,))
+            await conn.commit()
+
+    async def update_source_chunk_count(self, source_id: str, chunk_count: int):
+        """更新来源的 chunk 数量"""
+        async with self._get_connection() as conn:
+        if True: await conn.execute("PRAGMA foreign_keys = ON")
+            await conn.execute("UPDATE sources SET chunk_count = ? WHERE id = ?", (chunk_count, source_id))
+            await conn.commit()
+
+    # Note operations
+
+    async def create_note(self, note: Note) -> Note:
+        """创建笔记"""
+        if not note.id:
+            note.id = str(uuid.uuid4())
+        now = int(datetime.now().timestamp())
+        note.created_at = datetime.fromtimestamp(now)
+        note.updated_at = datetime.fromtimestamp(now)
+
+        metadata_json = json.dumps(note.metadata)
+        source_ids_json = json.dumps(note.source_ids)
+
+        async with self._get_connection() as conn:
+        if True: await conn.execute("PRAGMA foreign_keys = ON")
+            await conn.execute(
+                """INSERT INTO notes (id, notebook_id, title, content, type, source_ids,
+                   created_at, updated_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (note.id, note.notebook_id, note.title, note.content, note.type,
+                 source_ids_json, now, now, metadata_json)
+            )
+            await conn.commit()
+
+        return note
+
+    async def get_note(self, note_id: str) -> Optional[Note]:
+        """获取笔记"""
+        async with self._get_connection() as conn:
+        if True: await conn.execute("PRAGMA foreign_keys = ON")
+            async with conn.execute(
+                """SELECT id, notebook_id, title, content, type, source_ids,
+                   created_at, updated_at, metadata FROM notes WHERE id = ?""",
+                (note_id,)
+            ) as cursor:
+                row = await cursor.fetchone()
+                if not row:
+                    return None
+
+                return Note(
+                    id=row[0],
+                    notebook_id=row[1],
+                    title=row[2],
+                    content=row[3],
+                    type=row[4],
+                    source_ids=json.loads(row[5]) if row[5] else [],
+                    created_at=datetime.fromtimestamp(row[6]),
+                    updated_at=datetime.fromtimestamp(row[7]),
+                    metadata=json.loads(row[8]) if row[8] else {}
+                )
+
+    async def list_notes(self, notebook_id: str) -> List[Note]:
+        """列出笔记本的所有笔记"""
+        async with self._get_connection() as conn:
+        if True: await conn.execute("PRAGMA foreign_keys = ON")
+            async with conn.execute(
+                """SELECT id, notebook_id, title, content, type, source_ids,
+                   created_at, updated_at, metadata FROM notes WHERE notebook_id = ? ORDER BY created_at DESC""",
+                (notebook_id,)
+            ) as cursor:
+                notes = []
+                async for row in cursor:
+                    notes.append(Note(
+                        id=row[0],
+                        notebook_id=row[1],
+                        title=row[2],
+                        content=row[3],
+                        type=row[4],
+                        source_ids=json.loads(row[5]) if row[5] else [],
+                        created_at=datetime.fromtimestamp(row[6]),
+                        updated_at=datetime.fromtimestamp(row[7]),
+                        metadata=json.loads(row[8]) if row[8] else {}
+                    ))
+                return notes
+
+    async def delete_note(self, note_id: str):
+        """删除笔记"""
+        async with self._get_connection() as conn:
+        if True: await conn.execute("PRAGMA foreign_keys = ON")
+            await conn.execute("DELETE FROM notes WHERE id = ?", (note_id,))
+            await conn.commit()
+
+    # Chat operations
+
+    async def create_chat_session(self, notebook_id: str, title: str) -> ChatSession:
+        """创建聊天会话"""
+        session_id = str(uuid.uuid4())
+        now = int(datetime.now().timestamp())
+
+        if not title:
+            title = "New Chat"
+
+        metadata_json = json.dumps({})
+
+        async with self._get_connection() as conn:
+        if True: await conn.execute("PRAGMA foreign_keys = ON")
+            await conn.execute(
+                """INSERT INTO chat_sessions (id, notebook_id, title, created_at, updated_at, metadata)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (session_id, notebook_id, title, now, now, metadata_json)
+            )
+            await conn.commit()
+
+        return await self.get_chat_session(session_id)
+
+    async def get_chat_session(self, session_id: str) -> Optional[ChatSession]:
+        """获取聊天会话"""
+        async with self._get_connection() as conn:
+        if True: await conn.execute("PRAGMA foreign_keys = ON")
+            async with conn.execute(
+                """SELECT id, notebook_id, title, created_at, updated_at, metadata
+                   FROM chat_sessions WHERE id = ?""",
+                (session_id,)
+            ) as cursor:
+                row = await cursor.fetchone()
+                if not row:
+                    return None
+
+                session = ChatSession(
+                    id=row[0],
+                    notebook_id=row[1],
+                    title=row[2],
+                    created_at=datetime.fromtimestamp(row[3]),
+                    updated_at=datetime.fromtimestamp(row[4]),
+                    metadata=json.loads(row[5]) if row[5] else {}
+                )
+
+                # 加载消息
+                session.messages = await self._list_chat_messages(session_id)
+                return session
+
+    async def list_chat_sessions(self, notebook_id: str) -> List[ChatSession]:
+        """列出笔记本的所有聊天会话"""
+        async with self._get_connection() as conn:
+        if True: await conn.execute("PRAGMA foreign_keys = ON")
+            async with conn.execute(
+                """SELECT id, notebook_id, title, created_at, updated_at, metadata
+                   FROM chat_sessions WHERE notebook_id = ? ORDER BY updated_at DESC""",
+                (notebook_id,)
+            ) as cursor:
+                sessions = []
+                async for row in cursor:
+                    sessions.append(ChatSession(
+                        id=row[0],
+                        notebook_id=row[1],
+                        title=row[2],
+                        created_at=datetime.fromtimestamp(row[3]),
+                        updated_at=datetime.fromtimestamp(row[4]),
+                        metadata=json.loads(row[5]) if row[5] else {}
+                    ))
+                return sessions
+
+    async def delete_chat_session(self, session_id: str):
+        """删除聊天会话"""
+        async with self._get_connection() as conn:
+        if True: await conn.execute("PRAGMA foreign_keys = ON")
+            await conn.execute("DELETE FROM chat_sessions WHERE id = ?", (session_id,))
+            await conn.commit()
+
+    async def add_chat_message(self, session_id: str, role: str, content: str, sources: List[str]) -> ChatMessage:
+        """添加聊天消息"""
+        message_id = str(uuid.uuid4())
+        now = int(datetime.now().timestamp())
+
+        metadata_json = json.dumps({})
+        sources_json = json.dumps(sources)
+
+        async with self._get_connection() as conn:
+        if True: await conn.execute("PRAGMA foreign_keys = ON")
+            await conn.execute(
+                """INSERT INTO chat_messages (id, session_id, role, content, sources, created_at, metadata)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (message_id, session_id, role, content, sources_json, now, metadata_json)
+            )
+
+            # 更新会话时间戳
+            await conn.execute("UPDATE chat_sessions SET updated_at = ? WHERE id = ?", (now, session_id))
+            await conn.commit()
+
+        return ChatMessage(
+            id=message_id,
+            session_id=session_id,
+            role=role,
+            content=content,
+            sources=sources,
+            created_at=datetime.fromtimestamp(now),
+            metadata={}
+        )
+
+    async def _list_chat_messages(self, session_id: str) -> List[ChatMessage]:
+        """列出会话的所有消息（内部方法）"""
+        async with self._get_connection() as conn:
+        if True: await conn.execute("PRAGMA foreign_keys = ON")
+            async with conn.execute(
+                """SELECT id, session_id, role, content, sources, created_at, metadata
+                   FROM chat_messages WHERE session_id = ? ORDER BY created_at ASC""",
+                (session_id,)
+            ) as cursor:
+                messages = []
+                async for row in cursor:
+                    messages.append(ChatMessage(
+                        id=row[0],
+                        session_id=row[1],
+                        role=row[2],
+                        content=row[3],
+                        sources=json.loads(row[4]) if row[4] else [],
+                        created_at=datetime.fromtimestamp(row[5]),
+                        metadata=json.loads(row[6]) if row[6] else {}
+                    ))
+                return messages
+
+    async def close(self):
+        """关闭数据库连接"""
+        # aiosqlite 会自动管理连接池，无需显式关闭
+        pass
