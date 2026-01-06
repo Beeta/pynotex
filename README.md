@@ -10,6 +10,8 @@
 
 [English](#english) | [中文](#中文)
 
+![image-20260106154342142](docs/image-20260106154342142.png)
+
 </div>
 
 ---
@@ -18,7 +20,7 @@
 
 ### 📖 简介
 
-PyNotex 是一个隐私优先的 AI 知识管理系统，完整复刻自 [Notex](https://github.com/sonokai/notex) 项目，使用 Python + FastAPI 实现。
+PyNotex 是一个隐私优先的 AI 知识管理系统，完整复刻自 [Notex](https://github.com/smallnest/notex) 项目，使用 Python + FastAPI 实现。
 
 让 AI 帮你从文档中提取洞察、生成摘要、创建学习指南，同时数据完全掌控在你手中。
 
